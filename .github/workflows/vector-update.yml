@@ -1,0 +1,112 @@
+# .github/workflows/vector-update.yml
+name: Update Vector Database
+
+on:
+  push:
+    paths:
+      - 'data/**'  # Trigger when anything in data/ changes
+  workflow_dispatch:
+    inputs:
+      force_full_rebuild:
+        description: 'Force full vector database rebuild'
+        required: false
+        default: 'false'
+
+env:
+  CHROMA_PERSIST_DIR: ./chroma_db
+  PYTHON_VERSION: '3.10'
+
+jobs:
+  process-vectors:
+    runs-on: ubuntu-latest
+    
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          lfs: true  # Pull LFS files if you're using them
+      
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+      
+      - name: Cache dependencies
+        uses: actions/cache@v3
+        with:
+          path: ~/.cache/pip
+          key: ${{ runner.os }}-pip-${{ hashFiles('requirements.txt') }}
+      
+      - name: Install dependencies
+        run: |
+          pip install -r requirements.txt
+          pip install pinecone-client anthropic
+      
+      - name: Download existing vector DB
+        uses: actions/cache@v3
+        with:
+          path: ${{ env.CHROMA_PERSIST_DIR }}
+          key: chroma-db-${{ github.sha }}
+          restore-keys: |
+            chroma-db-
+      
+      - name: Get changed files
+        id: changes
+        run: |
+          if [ "${{ github.event.inputs.force_full_rebuild }}" == "true" ]; then
+            echo "changed_files=[]" >> $GITHUB_OUTPUT
+            echo "force_rebuild=true" >> $GITHUB_OUTPUT
+          else
+            # Get changed files in data directory
+            CHANGED=$(git diff --name-only HEAD~1 HEAD | grep '^data/' | jq -R -s -c 'split("\n")[:-1]')
+            echo "changed_files=$CHANGED" >> $GITHUB_OUTPUT
+            echo "force_rebuild=false" >> $GITHUB_OUTPUT
+          fi
+      
+      - name: Process all files and update vectors
+        env:
+          PINECONE_API_KEY: ${{ secrets.PINECONE_API_KEY }}
+          PINECONE_ENVIRONMENT: ${{ secrets.PINECONE_ENVIRONMENT }}
+          PINECONE_INDEX_NAME: ${{ secrets.PINECONE_INDEX_NAME }}
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+        run: |
+          python ci_vector_processor.py \
+            --changed-files '${{ steps.changes.outputs.changed_files }}' \
+            --force-rebuild '${{ steps.changes.outputs.force_rebuild }}' \
+            --data-dir './data' \
+            --upload-to-pinecone
+      
+      - name: Upload vector database
+        uses: actions/upload-artifact@v3
+        with:
+          name: vector-database
+          path: ${{ env.CHROMA_PERSIST_DIR }}
+          retention-days: 30
+      
+      - name: Upload processing results
+        uses: actions/upload-artifact@v3
+        with:
+          name: processing-results
+          path: processing_results.json
+
+  slack-notification:
+    needs: process-vectors
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Notify Slack on success
+        if: needs.process-vectors.result == 'success'
+        uses: rtCamp/action-slack-notify@v2
+        env:
+          SLACK_WEBHOOK: ${{ secrets.SLACK_WEBHOOK }}
+          SLACK_MESSAGE: |
+            ✅ Vector database updated successfully!
+            Commit: ${{ github.sha }}
+      
+      - name: Notify Slack on failure
+        if: needs.process-vectors.result == 'failure'
+        uses: rtCamp/action-slack-notify@v2
+        env:
+          SLACK_WEBHOOK: ${{ secrets.SLACK_WEBHOOK }}
+          SLACK_MESSAGE: |
+            ❌ Vector database update failed!
+            Check logs: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
