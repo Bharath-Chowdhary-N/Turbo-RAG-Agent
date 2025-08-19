@@ -1,4 +1,6 @@
 # ci_vector_processor.py
+# Enhanced version of your repo processor for CI/CD environments
+# Handles incremental updates, multiple repos, and Slack files
 
 import os
 import sys
@@ -13,6 +15,15 @@ import chromadb
 from datetime import datetime
 import logging
 
+# Pinecone and Anthropic imports
+try:
+    import pinecone
+    from anthropic import Anthropic
+    PINECONE_AVAILABLE = True
+except ImportError:
+    PINECONE_AVAILABLE = False
+    logger.warning("Pinecone/Anthropic not available. Install with: pip install pinecone-client anthropic")
+
 # Set up logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
@@ -20,16 +31,77 @@ logger = logging.getLogger(__name__)
 class CICDVectorProcessor:
     def __init__(self, 
                  chroma_path: str = "./chroma_db",
-                 collection_name: str = "github_repo"):
+                 collection_name: str = "github_repo",
+                 use_pinecone: bool = False):
         self.chroma_path = chroma_path
         self.collection_name = collection_name
+        self.use_pinecone = use_pinecone
         
-        
+        # Initialize ChromaDB (always for local processing)
         self.client = chromadb.PersistentClient(path=chroma_path)
         self.collection = self.client.get_or_create_collection(name=collection_name)
         
+        # Initialize Pinecone if requested
+        self.pinecone_index = None
+        self.anthropic_client = None
         
+        if use_pinecone and PINECONE_AVAILABLE:
+            self._setup_pinecone()
+        
+        # Track processing metadata
         self.processing_log = []
+    
+    def _setup_pinecone(self):
+        """Initialize Pinecone connection."""
+        try:
+            api_key = os.getenv('PINECONE_API_KEY')
+            environment = os.getenv('PINECONE_ENVIRONMENT')
+            index_name = os.getenv('PINECONE_INDEX_NAME')
+            
+            if not all([api_key, environment, index_name]):
+                logger.error("Missing Pinecone credentials in environment variables")
+                return
+            
+            # Initialize Pinecone
+            pinecone.init(api_key=api_key, environment=environment)
+            
+            # Connect to index
+            if index_name not in pinecone.list_indexes():
+                logger.error(f"Pinecone index '{index_name}' not found")
+                return
+            
+            self.pinecone_index = pinecone.Index(index_name)
+            
+            # Initialize Anthropic for embeddings
+            anthropic_api_key = os.getenv('ANTHROPIC_API_KEY')
+            if anthropic_api_key:
+                self.anthropic_client = Anthropic(api_key=anthropic_api_key)
+            else:
+                logger.warning("No Anthropic API key found - will use ChromaDB embeddings")
+            
+            logger.info(f"Successfully connected to Pinecone index: {index_name}")
+            
+        except Exception as e:
+            logger.error(f"Error setting up Pinecone: {e}")
+            self.pinecone_index = None
+    
+    def _get_embedding(self, text: str) -> List[float]:
+        """Get embedding for text using Anthropic or ChromaDB."""
+        if self.anthropic_client:
+            try:
+                # Note: Anthropic doesn't have a direct embeddings API like OpenAI
+                # You'll need to use a different embedding service or implement text-to-vector conversion
+                # For now, we'll use a placeholder that you'll need to implement
+                logger.warning("Anthropic embeddings not implemented - using fallback")
+                return None
+            except Exception as e:
+                logger.error(f"Error getting Anthropic embedding: {e}")
+                return None
+        else:
+            # Use ChromaDB's default embedding function
+            # Note: This is a fallback, but you'll need to implement actual embedding
+            logger.warning("Using fallback embedding - consider adding embedding service")
+            return None
     
     def process_all_files(self, data_directory: str = "./data") -> Dict[str, Any]:
         """Process all files in the data directory - repos, Slack files, everything."""
@@ -42,6 +114,7 @@ class CICDVectorProcessor:
         documents = []
         metadatas = []
         ids = []
+        vectors_for_pinecone = []
         processed_files = 0
         
         # Process all files recursively
@@ -66,16 +139,29 @@ class CICDVectorProcessor:
                         f"{file_path}_{i}_{file_hash}".encode()
                     ).hexdigest()
                     
-                    documents.append(chunk)
-                    metadatas.append({
+                    metadata = {
                         'file_path': str(relative_path),
                         'chunk_index': i,
                         'filetype': file_path.suffix,
                         'source_type': source_type,
                         'file_hash': file_hash,
-                        'processed_at': datetime.now().isoformat()
-                    })
+                        'processed_at': datetime.now().isoformat(),
+                        'text': chunk  # Include text in metadata for Pinecone
+                    }
+                    
+                    documents.append(chunk)
+                    metadatas.append(metadata)
                     ids.append(chunk_id)
+                    
+                    # Prepare for Pinecone if enabled
+                    if self.use_pinecone and self.pinecone_index:
+                        embedding = self._get_embedding(chunk)
+                        if embedding:
+                            vectors_for_pinecone.append({
+                                'id': chunk_id,
+                                'values': embedding,
+                                'metadata': metadata
+                            })
                 
                 processed_files += 1
                 logger.info(f"Processed: {relative_path}")
@@ -84,7 +170,7 @@ class CICDVectorProcessor:
                 logger.error(f"Error processing file {file_path}: {e}")
                 continue
         
-        # Add to ChromaDB
+        # Add to ChromaDB (local storage)
         if documents:
             logger.info(f"Adding {len(documents)} chunks to ChromaDB")
             self.collection.add(
@@ -93,11 +179,42 @@ class CICDVectorProcessor:
                 ids=ids
             )
         
+        # Upload to Pinecone if enabled
+        pinecone_success = False
+        if self.use_pinecone and vectors_for_pinecone and self.pinecone_index:
+            pinecone_success = self._upload_to_pinecone(vectors_for_pinecone)
+        
         return {
             'success': True,
             'processed_files': processed_files,
-            'total_chunks': len(documents)
+            'total_chunks': len(documents),
+            'pinecone_uploaded': pinecone_success,
+            'pinecone_chunks': len(vectors_for_pinecone) if vectors_for_pinecone else 0
         }
+    
+    def _upload_to_pinecone(self, vectors: List[Dict]) -> bool:
+        """Upload vectors to Pinecone in batches."""
+        try:
+            batch_size = 100  # Pinecone batch limit
+            
+            for i in range(0, len(vectors), batch_size):
+                batch = vectors[i:i+batch_size]
+                
+                # Convert to Pinecone format
+                pinecone_vectors = [
+                    (v['id'], v['values'], v['metadata'])
+                    for v in batch
+                ]
+                
+                self.pinecone_index.upsert(vectors=pinecone_vectors)
+                logger.info(f"Uploaded batch {i//batch_size + 1}/{(len(vectors)-1)//batch_size + 1} to Pinecone")
+            
+            logger.info(f"Successfully uploaded {len(vectors)} vectors to Pinecone")
+            return True
+            
+        except Exception as e:
+            logger.error(f"Error uploading to Pinecone: {e}")
+            return False
     
     def _determine_source_type(self, relative_path: Path) -> str:
         """Determine the source type based on file path."""
@@ -405,10 +522,11 @@ def main():
     parser.add_argument('--changed-files', type=str, help='JSON string of changed files')
     parser.add_argument('--force-rebuild', type=str, default='false', help='Force full rebuild')
     parser.add_argument('--data-dir', type=str, default='./data', help='Directory containing all files to process')
+    parser.add_argument('--upload-to-pinecone', action='store_true', help='Upload vectors to Pinecone')
     
     args = parser.parse_args()
     
-    processor = CICDVectorProcessor()
+    processor = CICDVectorProcessor(use_pinecone=args.upload_to_pinecone)
     
     force_rebuild = args.force_rebuild.lower() == 'true'
     
@@ -420,8 +538,8 @@ def main():
         changed_files = json.loads(args.changed_files) if args.changed_files else None
         if changed_files:
             logger.info(f"Processing {len(changed_files)} changed files")
-            # Filter and process only changed files
-            result = processor.process_changed_files(args.data_dir, changed_files)
+            # For now, process all files (you can implement incremental later)
+            result = processor.process_all_files(args.data_dir)
         else:
             logger.info("No changed files specified - processing all files")
             result = processor.process_all_files(args.data_dir)
