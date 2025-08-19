@@ -1,0 +1,6 @@
+chromadb
+gitpython
+pinecone-client
+anthropic
+openai
+pathlib2
