@@ -31,7 +31,7 @@ jobs:
           python-version: ${{ env.PYTHON_VERSION }}
       
       - name: Cache dependencies
-        uses: actions/cache@v3
+        uses: actions/cache@v4
         with:
           path: ~/.cache/pip
           key: ${{ runner.os }}-pip-${{ hashFiles('requirements.txt') }}
@@ -39,10 +39,10 @@ jobs:
       - name: Install dependencies
         run: |
           pip install -r requirements.txt
-          pip install pinecone-client anthropic
+          pip install pinecone-client anthropic openai
       
       - name: Download existing vector DB
-        uses: actions/cache@v3
+        uses: actions/cache@v4
         with:
           path: ${{ env.CHROMA_PERSIST_DIR }}
           key: chroma-db-${{ github.sha }}
@@ -68,6 +68,7 @@ jobs:
           PINECONE_ENVIRONMENT: ${{ secrets.PINECONE_ENVIRONMENT }}
           PINECONE_INDEX_NAME: ${{ secrets.PINECONE_INDEX_NAME }}
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
         run: |
           python ci_vector_processor.py \
             --changed-files '${{ steps.changes.outputs.changed_files }}' \
@@ -76,14 +77,14 @@ jobs:
             --upload-to-pinecone
       
       - name: Upload vector database
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@v4
         with:
           name: vector-database
           path: ${{ env.CHROMA_PERSIST_DIR }}
           retention-days: 30
       
       - name: Upload processing results
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@v4
         with:
           name: processing-results
           path: processing_results.json
