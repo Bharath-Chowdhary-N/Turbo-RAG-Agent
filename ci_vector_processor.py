@@ -15,14 +15,15 @@ import chromadb
 from datetime import datetime
 import logging
 
-# Pinecone and Anthropic imports
+# Pinecone, Anthropic, and OpenAI imports
 try:
     import pinecone
     from anthropic import Anthropic
+    from openai import OpenAI  # Keep for embeddings
     PINECONE_AVAILABLE = True
 except ImportError:
     PINECONE_AVAILABLE = False
-    logger.warning("Pinecone/Anthropic not available. Install with: pip install pinecone-client anthropic")
+    logger.warning("Required packages not available. Install with: pip install pinecone-client anthropic openai")
 
 # Set up logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -44,6 +45,7 @@ class CICDVectorProcessor:
         # Initialize Pinecone if requested
         self.pinecone_index = None
         self.anthropic_client = None
+        self.openai_client = None  # Keep for embeddings
         
         if use_pinecone and PINECONE_AVAILABLE:
             self._setup_pinecone()
@@ -58,26 +60,26 @@ class CICDVectorProcessor:
             environment = os.getenv('PINECONE_ENVIRONMENT')
             index_name = os.getenv('PINECONE_INDEX_NAME')
             
-            if not all([api_key, environment, index_name]):
+            if not all([api_key, index_name]):
                 logger.error("Missing Pinecone credentials in environment variables")
                 return
             
-            # Initialize Pinecone
-            pinecone.init(api_key=api_key, environment=environment)
+            # Initialize Pinecone with new SDK
+            pc = Pinecone(api_key=api_key)
             
             # Connect to index
-            if index_name not in pinecone.list_indexes():
+            if index_name not in [index.name for index in pc.list_indexes()]:
                 logger.error(f"Pinecone index '{index_name}' not found")
                 return
             
-            self.pinecone_index = pinecone.Index(index_name)
+            self.pinecone_index = pc.Index(index_name)
             
-            # Initialize Anthropic for embeddings
-            anthropic_api_key = os.getenv('ANTHROPIC_API_KEY')
-            if anthropic_api_key:
-                self.anthropic_client = Anthropic(api_key=anthropic_api_key)
+            # Initialize OpenAI for embeddings
+            openai_api_key = os.getenv('OPENAI_API_KEY')
+            if openai_api_key:
+                self.openai_client = OpenAI(api_key=openai_api_key)
             else:
-                logger.warning("No Anthropic API key found - will use ChromaDB embeddings")
+                logger.warning("No OpenAI API key found - will use ChromaDB embeddings")
             
             logger.info(f"Successfully connected to Pinecone index: {index_name}")
             
@@ -86,21 +88,20 @@ class CICDVectorProcessor:
             self.pinecone_index = None
     
     def _get_embedding(self, text: str) -> List[float]:
-        """Get embedding for text using Anthropic or ChromaDB."""
-        if self.anthropic_client:
+        """Get embedding for text using OpenAI (Anthropic doesn't have embeddings API)."""
+        if self.openai_client:
             try:
-                # Note: Anthropic doesn't have a direct embeddings API like OpenAI
-                # You'll need to use a different embedding service or implement text-to-vector conversion
-                # For now, we'll use a placeholder that you'll need to implement
-                logger.warning("Anthropic embeddings not implemented - using fallback")
-                return None
+                response = self.openai_client.embeddings.create(
+                    model="text-embedding-ada-002",
+                    input=text
+                )
+                return response.data[0].embedding
             except Exception as e:
-                logger.error(f"Error getting Anthropic embedding: {e}")
+                logger.error(f"Error getting OpenAI embedding: {e}")
                 return None
         else:
-            # Use ChromaDB's default embedding function
-            # Note: This is a fallback, but you'll need to implement actual embedding
-            logger.warning("Using fallback embedding - consider adding embedding service")
+            # Use ChromaDB's default embedding function as fallback
+            logger.warning("No embedding service available - using ChromaDB fallback")
             return None
     
     def process_all_files(self, data_directory: str = "./data") -> Dict[str, Any]:
