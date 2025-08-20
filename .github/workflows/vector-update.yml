@@ -1,141 +1,82 @@
-# .github/workflows/vector-update.yml
-name: Update Vector Database
+name: Vector Database CI/CD Pipeline
 
 on:
   push:
-    paths:
-      - 'data/**'
-  workflow_dispatch:
-    inputs:
-      force_full_rebuild:
-        description: 'Force full vector database rebuild'
-        required: false
-        default: 'false'
+    branches: [ master ]
+  pull_request:
+    branches: [ master ]
 
 env:
   CHROMA_PERSIST_DIR: ./chroma_db
   PYTHON_VERSION: '3.10'
 
 jobs:
-  process-vectors:
+  vector-processing:
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     
     steps:
-      - uses: actions/checkout@v4
-        with:
-          lfs: true
-      
-      - name: Set up Python
-        uses: actions/setup-python@v4
-        with:
-          python-version: ${{ env.PYTHON_VERSION }}
-      
-      - name: Cache dependencies
-        uses: actions/cache@v4
-        with:
-          path: ~/.cache/pip
-          key: ${{ runner.os }}-pip-${{ hashFiles('requirements.txt') }}
-      
-      - name: Install dependencies
-        run: |
-          pip install -r requirements.txt
-          pip install pinecone anthropic openai
-      
-      - name: Download existing vector DB
-        uses: actions/cache@v4
-        with:
-          path: ${{ env.CHROMA_PERSIST_DIR }}
-          key: chroma-db-${{ github.sha }}
-          restore-keys: |
-            chroma-db-
-      
-      - name: Get changed files
-        id: changes
-        run: |
-          if [ "${{ github.event.inputs.force_full_rebuild }}" == "true" ]; then
-            echo "changed_files=[]" >> $GITHUB_OUTPUT
-            echo "force_rebuild=true" >> $GITHUB_OUTPUT
-          else
-            CHANGED=$(git diff --name-only HEAD~1 HEAD | grep '^data/' | jq -R -s -c 'split("\n")[:-1]')
-            echo "changed_files=$CHANGED" >> $GITHUB_OUTPUT
-            echo "force_rebuild=false" >> $GITHUB_OUTPUT
-          fi
-      
-      - name: Process all files and update vectors
-        env:
-          PINECONE_API_KEY: ${{ secrets.PINECONE_API_KEY }}
-          PINECONE_ENVIRONMENT: ${{ secrets.PINECONE_ENVIRONMENT }}
-          PINECONE_INDEX_NAME: ${{ secrets.PINECONE_INDEX_NAME }}
-          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
-          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
-        run: |
-          python ci_vector_processor.py \
-            --changed-files '${{ steps.changes.outputs.changed_files }}' \
-            --force-rebuild '${{ steps.changes.outputs.force_rebuild }}' \
-            --data-dir './data' \
-            --upload-to-pinecone
-      
-      - name: Upload vector database
-        uses: actions/upload-artifact@v4
-        with:
-          name: vector-database
-          path: ${{ env.CHROMA_PERSIST_DIR }}
-          retention-days: 30
-      
-      - name: Upload processing results
-        uses: actions/upload-artifact@v4
-        with:
-          name: processing-results
-          path: processing_results.json
-      
-      - name: Print processing summary
-        run: |
-          echo "Vector processing completed!"
-          echo "Processed files from data/ directory"
-          echo "Check artifacts for detailed results"
-          if [ -f processing_results.json ]; then
-            echo "Processing Results:"
-            cat processing_results.json
-          fi
-
-  slack-notification:
-    needs: process-vectors
-    if: always()
-    runs-on: ubuntu-latest
-    steps:
-      - name: Notify Success
-        if: needs.process-vectors.result == 'success'
-        uses: rtCamp/action-slack-notify@v2
-        env:
-          SLACK_WEBHOOK: ${{ secrets.SLACK_WEBHOOK}}
-          SLACK_TITLE: "Turbo Telescope CI/CD - Success"
-          SLACK_COLOR: "good"
-          SLACK_MESSAGE: |
-            Interactive Turbo Telescope - Vector Database Updated Successfully!
-            
-            Data Source: Files from data/ directory
-            Processing: OpenAI embeddings + Anthropic + Pinecone storage
-            Triggered by: ${{ github.actor }}
-            Branch: ${{ github.ref_name }}
-            Commit: ${{ github.sha }}
-            
-            Your telescope data is now searchable via vector similarity!
-            View Details: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
-      
-      - name: Notify Failure
-        if: needs.process-vectors.result == 'failure'
-        uses: rtCamp/action-slack-notify@v2
-        env:
-          SLACK_WEBHOOK: ${{ secrets.SLACK_WEBHOOK}}
-          SLACK_TITLE: "Turbo Telescope CI/CD - Failed"
-          SLACK_COLOR: "danger"
-          SLACK_MESSAGE: |
-            Interactive Turbo Telescope - Vector Processing Failed!
-            
-            There was an error during vector processing.
-            Triggered by: ${{ github.actor }}
-            Branch: ${{ github.ref_name }}
-            Commit: ${{ github.sha }}
-            
-            Check the logs for debugging details:
-            View Details: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+    - name: Checkout repository
+      uses: actions/checkout@v4
+    
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: ${{ env.PYTHON_VERSION }}
+        cache: 'pip'
+    
+    - name: Cache dependencies
+      uses: actions/cache@v3
+      with:
+        path: ~/.cache/pip
+        key: pip-${{ runner.os }}-${{ hashFiles('**/requirements.txt') }}
+        restore-keys: |
+          pip-${{ runner.os }}-
+    
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install -r requirements.txt
+    
+    # ALWAYS USE TEST MODE FOR NOW (fast processing)
+    - name: Process Vectors (Test Mode)
+      run: |
+        echo "🧪 Running in TEST mode - processing only 10 files for speed"
+        python ci_vector_processor.py --data-dir ./data --test-mode
+      timeout-minutes: 10
+    
+    # WHEN YOU WANT FULL PROCESSING, COMMENT OUT THE ABOVE STEP AND UNCOMMENT THIS:
+    # - name: Process Vectors (Full Mode)
+    #   run: |
+    #     echo "🚀 Running FULL processing - processing ALL files"
+    #     python ci_vector_processor.py --data-dir ./data
+    #   timeout-minutes: 120
+    
+    - name: Validate Processing Results
+      run: |
+        if [ -f "processing_results.json" ]; then
+          echo "✅ Processing completed successfully!"
+          cat processing_results.json | python -m json.tool
+        else
+          echo "❌ No processing results file found!"
+          exit 1
+        fi
+    
+    - name: Upload Processing Results
+      uses: actions/upload-artifact@v3
+      with:
+        name: processing-results
+        path: processing_results.json
+    
+    - name: Slack Notification
+      if: always()
+      uses: rtCamp/action-slack-notify@v2
+      env:
+        SLACK_WEBHOOK: ${{ secrets.SLACK_WEBHOOK }}
+        SLACK_TITLE: 'Vector DB Processing Complete'
+        SLACK_MESSAGE: |
+          Status: ${{ job.status == 'success' && '✅ Success' || '❌ Failed' }}
+          Mode: Test Mode (10 files only)
+          Branch: ${{ github.ref_name }}
+          Commit: ${{ github.sha }}
+        SLACK_COLOR: ${{ job.status == 'success' && 'good' || 'danger' }}
