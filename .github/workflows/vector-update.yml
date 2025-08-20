@@ -98,22 +98,21 @@ jobs:
         uses: rtCamp/action-slack-notify@v2
         env:
           SLACK_WEBHOOK: ${{ secrets.SLACK_WEBHOOK_INTERACTIVE_TURBO_TELESCOPE }}
+          SLACK_TITLE: "🚀 Turbo Telescope CI/CD"
+          SLACK_COLOR: ${{ needs.process-vectors.result == 'success' && 'good' || 'danger' }}
+          SLACK_FOOTER: "Interactive Turbo Telescope Project"
           SLACK_MESSAGE: |
             🔭 **Interactive Turbo Telescope - CI/CD Update**
             
-            ${{ needs.process-vectors.result == 'success' && '✅ **Success**: Vector database updated!' || '❌ **Failed**: Vector processing encountered an error!' }}
+            Status: ${{ needs.process-vectors.result == 'success' && '✅ Success - Vector database updated!' || '❌ Failed - Vector processing encountered an error!' }}
             
             📁 **Data Source**: Files from data/ directory
             🤖 **Processing**: OpenAI embeddings + Anthropic + Pinecone storage
             👨‍💻 **Triggered by**: ${{ github.actor }}
             🌿 **Branch**: ${{ github.ref_name }}
-            📝 **Commit**: `${{ github.sha }}`
+            📝 **Commit**: ${{ github.sha }}
             
-            ${{ needs.process-vectors.result == 'success' && '🎯 Your telescope data is now searchable via vector similarity!' || '🔧 Check the logs for debugging details:' }}
-            🔗 **View Details**: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
-          SLACK_TITLE: "🚀 Turbo Telescope CI/CD"
-          SLACK_COLOR: ${{ needs.process-vectors.result == 'success' && 'good' || 'danger' }}
-          SLACK_FOOTER: "Interactive Turbo Telescope Project"data/' | jq -R -s -c 'split("\n")[:-1]')
+            🔗 **View Details**: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}data/' | jq -R -s -c 'split("\n")[:-1]')
             echo "changed_files=$CHANGED" >> $GITHUB_OUTPUT
             echo "force_rebuild=false" >> $GITHUB_OUTPUT
           fi
