@@ -552,17 +552,17 @@ def main():
     
     if force_rebuild:
         logger.info("Force rebuild requested - processing all files")
-        result = processor.process_all_files(args.data_dir)
+        result = processor.process_all_files(args.data_dir, test_mode=args.test_mode)
     else:
         # Process only changed files if specified
         changed_files = json.loads(args.changed_files) if args.changed_files else None
         if changed_files:
             logger.info(f"Processing {len(changed_files)} changed files")
             # For now, process all files (you can implement incremental later)
-            result = processor.process_all_files(args.data_dir)
+            result = processor.process_all_files(args.data_dir, test_mode=args.test_mode)
         else:
             logger.info("No changed files specified - processing all files")
-            result = processor.process_all_files(args.data_dir)
+            result = processor.process_all_files(args.data_dir, test_mode=args.test_mode)
     
     # Print summary
     stats = processor.get_collection_stats()
