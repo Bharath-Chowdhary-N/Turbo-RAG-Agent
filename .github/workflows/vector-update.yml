@@ -4,7 +4,7 @@ name: Update Vector Database
 on:
   push:
     paths:
-      - 'data/**'  # Trigger when anything in data/ changes
+      - 'data/**'
   workflow_dispatch:
     inputs:
       force_full_rebuild:
@@ -23,7 +23,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          lfs: true  # Pull LFS files if you're using them
+          lfs: true
       
       - name: Set up Python
         uses: actions/setup-python@v4
@@ -56,7 +56,6 @@ jobs:
             echo "changed_files=[]" >> $GITHUB_OUTPUT
             echo "force_rebuild=true" >> $GITHUB_OUTPUT
           else
-            # Get changed files in data directory
             CHANGED=$(git diff --name-only HEAD~1 HEAD | grep '^data/' | jq -R -s -c 'split("\n")[:-1]')
             echo "changed_files=$CHANGED" >> $GITHUB_OUTPUT
             echo "force_rebuild=false" >> $GITHUB_OUTPUT
@@ -88,124 +87,55 @@ jobs:
         with:
           name: processing-results
           path: processing_results.json
+      
+      - name: Print processing summary
+        run: |
+          echo "Vector processing completed!"
+          echo "Processed files from data/ directory"
+          echo "Check artifacts for detailed results"
+          if [ -f processing_results.json ]; then
+            echo "Processing Results:"
+            cat processing_results.json
+          fi
 
   slack-notification:
     needs: process-vectors
     if: always()
     runs-on: ubuntu-latest
     steps:
-      - name: Notify Interactive Turbo Telescope Channel
+      - name: Notify Success
+        if: needs.process-vectors.result == 'success'
         uses: rtCamp/action-slack-notify@v2
         env:
           SLACK_WEBHOOK: ${{ secrets.SLACK_WEBHOOK_INTERACTIVE_TURBO_TELESCOPE }}
-          SLACK_TITLE: "🚀 Turbo Telescope CI/CD"
-          SLACK_COLOR: ${{ needs.process-vectors.result == 'success' && 'good' || 'danger' }}
-          SLACK_FOOTER: "Interactive Turbo Telescope Project"
-          SLACK_MESSAGE: |
-            🔭 **Interactive Turbo Telescope - CI/CD Update**
-            
-            Status: ${{ needs.process-vectors.result == 'success' && '✅ Success - Vector database updated!' || '❌ Failed - Vector processing encountered an error!' }}
-            
-            📁 **Data Source**: Files from data/ directory
-            🤖 **Processing**: OpenAI embeddings + Anthropic + Pinecone storage
-            👨‍💻 **Triggered by**: ${{ github.actor }}
-            🌿 **Branch**: ${{ github.ref_name }}
-            📝 **Commit**: ${{ github.sha }}
-            
-            🔗 **View Details**: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}data/' | jq -R -s -c 'split("\n")[:-1]')
-            echo "changed_files=$CHANGED" >> $GITHUB_OUTPUT
-            echo "force_rebuild=false" >> $GITHUB_OUTPUT
-          fi
-      
-      - name: Process all files and update vectors
-        env:
-          PINECONE_API_KEY: ${{ secrets.PINECONE_API_KEY }}
-          PINECONE_ENVIRONMENT: ${{ secrets.PINECONE_ENVIRONMENT }}
-          PINECONE_INDEX_NAME: ${{ secrets.PINECONE_INDEX_NAME }}
-          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
-          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
-        run: |
-          python ci_vector_processor.py \
-            --changed-files '${{ steps.changes.outputs.changed_files }}' \
-            --force-rebuild '${{ steps.changes.outputs.force_rebuild }}' \
-            --data-dir './data' \
-            --upload-to-pinecone
-      
-      - name: Upload vector database
-        uses: actions/upload-artifact@v4
-        with:
-          name: vector-database
-          path: ${{ env.CHROMA_PERSIST_DIR }}
-          retention-days: 30
-      
-      - name: Upload processing results
-        uses: actions/upload-artifact@v4
-        with:
-          name: processing-results
-          path: processing_results.json
-
-  slack-notifications:
-    needs: process-vectors
-    if: always()
-    runs-on: ubuntu-latest
-    steps:
-      # General channel - Simple success/failure summary
-      - name: Notify General Channel
-        if: always()
-        uses: rtCamp/action-slack-notify@v2
-        env:
-          SLACK_WEBHOOK: ${{ secrets.SLACK_WEBHOOK_GENERAL }}
-          SLACK_MESSAGE: |
-            ${{ needs.process-vectors.result == 'success' && '✅ Vector database updated successfully!' || '❌ Vector processing failed!' }}
-            Repository: ${{ github.repository }}
-            Commit: ${{ github.sha }}
-          SLACK_TITLE: "Turbo RAG Update"
-          SLACK_COLOR: ${{ needs.process-vectors.result == 'success' && 'good' || 'danger' }}
-      
-      # Tech Talk channel - Technical details
-      - name: Notify Tech Talk Channel
-        if: needs.process-vectors.result == 'success'
-        uses: rtCamp/action-slack-notify@v2
-        env:
-          SLACK_WEBHOOK: ${{ secrets.SLACK_WEBHOOK_TECH_TALK }}
-          SLACK_MESSAGE: |
-            🔧 **Technical Update: Vector Processing**
-            ✅ Status: Success
-            📊 Pinecone vectors updated with new embeddings
-            🤖 Using: OpenAI embeddings + Anthropic processing
-            📁 Processed files from data/ directory
-            🔗 Details: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
-          SLACK_TITLE: "Vector DB Technical Update"
+          SLACK_TITLE: "Turbo Telescope CI/CD - Success"
           SLACK_COLOR: "good"
-      
-      # Turbo Construction channel - Build/deployment info
-      - name: Notify Turbo Construction Channel
-        if: always()
-        uses: rtCamp/action-slack-notify@v2
-        env:
-          SLACK_WEBHOOK: ${{ secrets.SLACK_WEBHOOK_TURBO_CONSTRUCTION }}
           SLACK_MESSAGE: |
-            🏗️ **CI/CD Pipeline Update**
-            Status: ${{ needs.process-vectors.result == 'success' && '✅ Success' || '❌ Failed' }}
-            Pipeline: Vector Database Processing
-            Trigger: ${{ github.event_name }}
+            Interactive Turbo Telescope - Vector Database Updated Successfully!
+            
+            Data Source: Files from data/ directory
+            Processing: OpenAI embeddings + Anthropic + Pinecone storage
+            Triggered by: ${{ github.actor }}
             Branch: ${{ github.ref_name }}
-            ${{ needs.process-vectors.result == 'failure' && '🔗 Debug logs: ' || '📦 Artifacts available: ' }}${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
-          SLACK_TITLE: "Build Pipeline Status"
-          SLACK_COLOR: ${{ needs.process-vectors.result == 'success' && 'good' || 'danger' }}
+            Commit: ${{ github.sha }}
+            
+            Your telescope data is now searchable via vector similarity!
+            View Details: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
       
-      # Random channel - Fun notification (only on success)
-      - name: Notify Random Channel
-        if: needs.process-vectors.result == 'success'
+      - name: Notify Failure
+        if: needs.process-vectors.result == 'failure'
         uses: rtCamp/action-slack-notify@v2
         env:
-          SLACK_WEBHOOK: ${{ secrets.SLACK_WEBHOOK_RANDOM }}
+          SLACK_WEBHOOK: ${{ secrets.SLACK_WEBHOOK_INTERACTIVE_TURBO_TELESCOPE }}
+          SLACK_TITLE: "Turbo Telescope CI/CD - Failed"
+          SLACK_COLOR: "danger"
           SLACK_MESSAGE: |
-            🎉 The robots are happy! 🤖✨
-            Just fed some fresh data to our AI overlords... I mean, vector database! 📊
+            Interactive Turbo Telescope - Vector Processing Failed!
             
-            Fun fact: Your vectors are now living their best life in Pinecone! 🌲
+            There was an error during vector processing.
+            Triggered by: ${{ github.actor }}
+            Branch: ${{ github.ref_name }}
+            Commit: ${{ github.sha }}
             
-            Commit by: ${{ github.actor }} 👨‍💻
-          SLACK_TITLE: "🚀 Vector Success Party!"
-          SLACK_COLOR: "good"
+            Check the logs for debugging details:
+            View Details: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
