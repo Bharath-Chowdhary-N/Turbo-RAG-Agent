@@ -174,11 +174,21 @@ class CICDVectorProcessor:
         # Add to ChromaDB (local storage)
         if documents:
             logger.info(f"Adding {len(documents)} chunks to ChromaDB")
-            self.collection.add(
-                documents=documents,
-                metadatas=metadatas,
-                ids=ids
-            )
+            # Fixed version - add this at line 177 instead:
+            batch_size = 5000
+            total_docs = len(documents)
+            print(f"Processing {total_docs} documents in batches of {batch_size}")
+
+            for i in range(0, total_docs, batch_size):
+                end_idx = min(i + batch_size, total_docs)
+                
+                self.collection.add(
+                    documents=documents[i:end_idx],
+                    metadatas=metadatas[i:end_idx] if metadatas else None,
+                    ids=ids[i:end_idx]
+                )
+                print(f"Added batch {i//batch_size + 1}: documents {i+1}-{end_idx}")
+
         
         # Upload to Pinecone if enabled
         pinecone_success = False
