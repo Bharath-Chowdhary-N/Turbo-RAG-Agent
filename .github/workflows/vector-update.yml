@@ -107,7 +107,7 @@ jobs:
         if: needs.process-vectors.result == 'success'
         uses: rtCamp/action-slack-notify@v2
         env:
-          SLACK_WEBHOOK: ${{ secrets.SLACK_WEBHOOK_INTERACTIVE_TURBO_TELESCOPE }}
+          SLACK_WEBHOOK: ${{ secrets.SLACK_WEBHOOK}}
           SLACK_TITLE: "Turbo Telescope CI/CD - Success"
           SLACK_COLOR: "good"
           SLACK_MESSAGE: |
@@ -126,7 +126,7 @@ jobs:
         if: needs.process-vectors.result == 'failure'
         uses: rtCamp/action-slack-notify@v2
         env:
-          SLACK_WEBHOOK: ${{ secrets.SLACK_WEBHOOK_INTERACTIVE_TURBO_TELESCOPE }}
+          SLACK_WEBHOOK: ${{ secrets.SLACK_WEBHOOK}}
           SLACK_TITLE: "Turbo Telescope CI/CD - Failed"
           SLACK_COLOR: "danger"
           SLACK_MESSAGE: |
