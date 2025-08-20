@@ -1,6 +1,6 @@
 chromadb
 gitpython
-pinecone-client
+pinecone
 anthropic
 openai
 pathlib2
