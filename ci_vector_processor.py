@@ -104,7 +104,7 @@ class CICDVectorProcessor:
             logger.warning("No embedding service available - using ChromaDB fallback")
             return None
     
-    def process_all_files(self, data_directory: str = "./data") -> Dict[str, Any]:
+    def process_all_files(self, data_directory: str = "./data", test_mode: bool = False) -> Dict[str, Any]:
         """Process all files in the data directory - repos, Slack files, everything."""
         data_path = Path(data_directory)
         
@@ -117,9 +117,17 @@ class CICDVectorProcessor:
         ids = []
         vectors_for_pinecone = []
         processed_files = 0
-        
-        # Process all files recursively
-        for file_path in data_path.rglob("*"):
+
+        all_files = [file_path for file_path in data_path.rglob("*") 
+             if file_path.is_file() and self.should_process_file(file_path)]
+
+        # Apply test mode limit if enabled
+        if test_mode:
+            all_files = all_files[:10]  # Only process first 10 files
+            logger.info(f"TEST MODE: Processing only {len(all_files)} files instead of full dataset")
+
+        # Process the files (now limited in test mode)
+        for file_path in all_files:
             if not (file_path.is_file() and self.should_process_file(file_path)):
                 continue
             
@@ -532,6 +540,7 @@ def main():
     parser = argparse.ArgumentParser(description='CI/CD Vector Processor')
     parser.add_argument('--changed-files', type=str, help='JSON string of changed files')
     parser.add_argument('--force-rebuild', type=str, default='false', help='Force full rebuild')
+    parser.add_argument("--test-mode", action="store_true", help="Process only first 10 files for testing")
     parser.add_argument('--data-dir', type=str, default='./data', help='Directory containing all files to process')
     parser.add_argument('--upload-to-pinecone', action='store_true', help='Upload vectors to Pinecone')
     
