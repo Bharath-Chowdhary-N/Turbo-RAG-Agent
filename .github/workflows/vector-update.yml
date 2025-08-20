@@ -63,7 +63,7 @@ jobs:
         fi
     
     - name: Upload Processing Results
-      uses: actions/upload-artifact@v3
+      uses: actions/upload-artifact@v4
       with:
         name: processing-results
         path: processing_results.json
