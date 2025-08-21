@@ -324,65 +324,131 @@ def main():
         initial_sidebar_state="expanded"
     )
     
-    # Custom CSS
+    # Custom CSS for better chat UI
     st.markdown("""
     <style>
     .main-header {
-        background: linear-gradient(90deg, #1e3c72 0%, #2a5298 100%);
-        padding: 1rem;
-        border-radius: 0.5rem;
+        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        padding: 1.5rem;
+        border-radius: 10px;
         color: white;
         text-align: center;
         margin-bottom: 2rem;
+        box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
     }
+    
     .chat-container {
-        height: 400px;
+        height: 500px;
         overflow-y: auto;
         padding: 1rem;
-        border: 1px solid #ddd;
-        border-radius: 0.5rem;
+        border: 1px solid #e0e0e0;
+        border-radius: 10px;
         margin-bottom: 1rem;
-        background-color: #f8f9fa;
+        background: linear-gradient(to bottom, #f8f9fa, #ffffff);
+        box-shadow: inset 0 2px 4px rgba(0, 0, 0, 0.05);
     }
+    
     .user-message {
-        background-color: #007bff;
+        background: linear-gradient(135deg, #007bff, #0056b3);
         color: white;
-        padding: 0.5rem 1rem;
-        border-radius: 1rem;
-        margin: 0.5rem 0;
-        margin-left: 20%;
-        text-align: right;
+        padding: 12px 16px;
+        border-radius: 18px 18px 6px 18px;
+        margin: 8px 0 8px auto;
+        max-width: 75%;
+        word-wrap: break-word;
+        box-shadow: 0 2px 4px rgba(0, 123, 255, 0.3);
+        position: relative;
     }
+    
     .assistant-message {
-        background-color: white;
+        background: white;
         color: #333;
-        padding: 0.5rem 1rem;
-        border-radius: 1rem;
-        margin: 0.5rem 0;
-        margin-right: 20%;
-        border: 1px solid #ddd;
+        padding: 12px 16px;
+        border-radius: 18px 18px 18px 6px;
+        margin: 8px auto 8px 0;
+        max-width: 75%;
+        border: 1px solid #e9ecef;
+        word-wrap: break-word;
+        box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+        position: relative;
     }
+    
+    .message-time {
+        font-size: 0.7rem;
+        opacity: 0.7;
+        margin-top: 4px;
+    }
+    
+    .input-container {
+        position: sticky;
+        bottom: 0;
+        background: white;
+        padding: 1rem;
+        border-top: 1px solid #e0e0e0;
+        border-radius: 10px 10px 0 0;
+        box-shadow: 0 -2px 10px rgba(0, 0, 0, 0.1);
+    }
+    
     .source-badge {
         display: inline-block;
-        padding: 0.25rem 0.5rem;
-        border-radius: 0.25rem;
-        font-size: 0.75rem;
-        font-weight: bold;
-        margin-right: 0.5rem;
+        padding: 4px 8px;
+        border-radius: 12px;
+        font-size: 0.7rem;
+        font-weight: 600;
+        margin: 2px 4px 2px 0;
+        text-transform: uppercase;
     }
+    
     .github-badge {
-        background-color: #28a745;
+        background: linear-gradient(135deg, #28a745, #20c997);
         color: white;
     }
+    
     .slack-badge {
-        background-color: #4a154b;
+        background: linear-gradient(135deg, #4a154b, #611f69);
         color: white;
     }
+    
     .stats-container {
-        background-color: #f8f9fa;
+        background: linear-gradient(135deg, #f8f9fa, #e9ecef);
         padding: 1rem;
-        border-radius: 0.5rem;
+        border-radius: 10px;
         border-left: 4px solid #007bff;
+        margin-bottom: 1rem;
+    }
+    
+    .sidebar-section {
+        background: #f8f9fa;
+        padding: 1rem;
+        border-radius: 8px;
+        margin-bottom: 1rem;
+        border: 1px solid #e9ecef;
+    }
+    
+    /* Hide the default text input styling */
+    .stTextInput > div > div > input {
+        border-radius: 25px;
+        border: 2px solid #e9ecef;
+        padding: 12px 20px;
+        font-size: 14px;
+    }
+    
+    .stTextInput > div > div > input:focus {
+        border-color: #007bff;
+        box-shadow: 0 0 0 0.2rem rgba(0, 123, 255, 0.25);
+    }
+    
+    /* Button styling */
+    .stButton > button {
+        border-radius: 25px;
+        height: 50px;
+        font-weight: 600;
+        transition: all 0.3s ease;
+    }
+    
+    .stButton > button:hover {
+        transform: translateY(-1px);
+        box-shadow: 0 4px 8px rgba(0, 0, 0, 0.2);
     }
     </style>
     """, unsafe_allow_html=True)
@@ -415,22 +481,27 @@ def main():
         st.error(f"Failed to initialize RAG system: {e}")
         st.stop()
     
-    # Initialize session state for chat history
+    # Initialize session state for chat history and input control
     if 'chat_history' not in st.session_state:
         st.session_state.chat_history = []
+    if 'input_key' not in st.session_state:
+        st.session_state.input_key = 0
+    if 'processing' not in st.session_state:
+        st.session_state.processing = False
     
     # Sidebar
     with st.sidebar:
-        st.header("Settings")
+        st.markdown('<div class="sidebar-section">', unsafe_allow_html=True)
+        st.header("⚙️ Settings")
         
         # Source filter
         source_filter = st.selectbox(
             "Search in:",
             options=["both", "github", "slack"],
             format_func=lambda x: {
-                "both": "Both GitHub & Slack",
-                "github": "GitHub Repository Only", 
-                "slack": "Slack Messages Only"
+                "both": "🔍 Both GitHub & Slack",
+                "github": "💻 GitHub Repository Only", 
+                "slack": "💬 Slack Messages Only"
             }[x]
         )
         
@@ -441,14 +512,17 @@ def main():
             max_value=10,
             value=5
         )
+        st.markdown('</div>', unsafe_allow_html=True)
         
         # Chat controls
-        st.subheader("Chat Controls")
-        if st.button("Clear Chat History", type="secondary"):
+        st.markdown('<div class="sidebar-section">', unsafe_allow_html=True)
+        st.subheader("💬 Chat Controls")
+        if st.button("🗑️ Clear Chat History", use_container_width=True):
             st.session_state.chat_history = []
+            st.session_state.input_key += 1
             st.rerun()
         
-        if st.button("Export Chat", type="secondary"):
+        if st.button("💾 Export Chat", use_container_width=True):
             if st.session_state.chat_history:
                 chat_export = []
                 for msg in st.session_state.chat_history:
@@ -459,27 +533,32 @@ def main():
                     })
                 
                 st.download_button(
-                    label="Download Chat History",
+                    label="📥 Download Chat History",
                     data=json.dumps(chat_export, indent=2),
                     file_name=f"chat_history_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json",
-                    mime="application/json"
+                    mime="application/json",
+                    use_container_width=True
                 )
+        st.markdown('</div>', unsafe_allow_html=True)
         
         # Index statistics
-        st.subheader("Database Stats")
+        st.markdown('<div class="sidebar-section">', unsafe_allow_html=True)
+        st.subheader("📊 Database Stats")
         with st.spinner("Loading stats..."):
             stats = rag_system.get_index_stats()
             
         if stats:
             st.markdown(f"""
             <div class="stats-container">
-                <strong>Total Documents:</strong> {stats.get('total_vectors', 0):,}<br>
-                <strong>Index Fullness:</strong> {stats.get('index_fullness', 0):.1%}
+                <strong>📚 Total Documents:</strong> {stats.get('total_vectors', 0):,}<br>
+                <strong>📈 Index Fullness:</strong> {stats.get('index_fullness', 0):.1%}
             </div>
             """, unsafe_allow_html=True)
+        st.markdown('</div>', unsafe_allow_html=True)
         
         # Example questions
-        st.subheader("Example Questions")
+        st.markdown('<div class="sidebar-section">', unsafe_allow_html=True)
+        st.subheader("💡 Example Questions")
         example_questions = [
             "How does authentication work?",
             "What did the team discuss about the API?",
@@ -492,101 +571,156 @@ def main():
         for question in example_questions:
             if st.button(question, key=f"example_{hash(question)}", use_container_width=True):
                 st.session_state.pending_question = question
+                st.rerun()
+        st.markdown('</div>', unsafe_allow_html=True)
     
     # Main chat interface
-    st.subheader("Chat Interface")
+    col1, col2 = st.columns([3, 1])
     
-    # Display chat history
-    chat_container = st.container()
-    with chat_container:
+    with col1:
+        # Display chat history
         if st.session_state.chat_history:
             st.markdown('<div class="chat-container">', unsafe_allow_html=True)
             
             for msg in st.session_state.chat_history:
+                time_str = msg.timestamp.strftime("%H:%M")
                 if msg.role == "user":
-                    st.markdown(f'<div class="user-message">{msg.content}</div>', unsafe_allow_html=True)
+                    st.markdown(f'''
+                    <div class="user-message">
+                        {msg.content}
+                        <div class="message-time">{time_str}</div>
+                    </div>
+                    ''', unsafe_allow_html=True)
                 else:
-                    st.markdown(f'<div class="assistant-message">{msg.content}</div>', unsafe_allow_html=True)
+                    st.markdown(f'''
+                    <div class="assistant-message">
+                        {msg.content}
+                        <div class="message-time">{time_str}</div>
+                    </div>
+                    ''', unsafe_allow_html=True)
                     
                     # Show sources if available
                     if msg.sources:
-                        with st.expander(f"Sources ({len(msg.sources)} found)", expanded=False):
+                        with st.expander(f"📚 Sources ({len(msg.sources)} found)", expanded=False):
                             for i, source in enumerate(msg.sources, 1):
                                 source_type = source['source_type']
                                 badge_class = "github-badge" if source_type == "github" else "slack-badge"
                                 
-                                st.markdown(f'<span class="source-badge {badge_class}">{source_type.upper()}</span>', unsafe_allow_html=True)
+                                st.markdown(f'<span class="source-badge {badge_class}">{source_type}</span>', unsafe_allow_html=True)
                                 
                                 if source_type == 'github':
-                                    st.text(f"File: {source['file_path']}")
+                                    st.text(f"📁 File: {source['file_path']}")
                                 elif source_type == 'slack':
-                                    st.text(f"#{source['channel']} - {source['user']}")
+                                    st.text(f"💬 #{source['channel']} - {source['user']}")
                                 
                                 st.text(source['content'][:200] + "..." if len(source['content']) > 200 else source['content'])
-                                st.divider()
+                                if i < len(msg.sources):
+                                    st.divider()
             
             st.markdown('</div>', unsafe_allow_html=True)
         else:
-            st.info("Start a conversation by asking a question below!")
-    
-    # Input area
-    col1, col2 = st.columns([4, 1])
-    
-    with col1:
+            st.markdown("""
+            <div class="chat-container">
+                <div style="text-align: center; padding: 50px; color: #6c757d;">
+                    <h3>👋 Welcome to your RAG Assistant!</h3>
+                    <p>Start a conversation by asking a question below.</p>
+                    <p>I can help you with questions about your GitHub repository and Slack conversations.</p>
+                </div>
+            </div>
+            """, unsafe_allow_html=True)
+        
+        # Input area - Fixed to bottom
+        st.markdown('<div class="input-container">', unsafe_allow_html=True)
+        
         # Handle pending question from sidebar
         default_question = ""
         if 'pending_question' in st.session_state:
             default_question = st.session_state.pending_question
             del st.session_state.pending_question
         
-        question = st.text_input(
-            "Ask a question:",
-            value=default_question,
-            placeholder="e.g., How does the authentication system work?",
-            key="question_input"
-        )
+        # Input form to prevent automatic submission
+        with st.form(key="chat_form", clear_on_submit=True):
+            col_input, col_send = st.columns([4, 1])
+            
+            with col_input:
+                question = st.text_input(
+                    "Ask a question:",
+                    value=default_question,
+                    placeholder="Type your message here...",
+                    label_visibility="collapsed",
+                    key=f"question_input_{st.session_state.input_key}",
+                    disabled=st.session_state.processing
+                )
+            
+            with col_send:
+                send_button = st.form_submit_button(
+                    "Send",
+                    type="primary", 
+                    use_container_width=True,
+                    disabled=st.session_state.processing
+                )
+        
+        st.markdown('</div>', unsafe_allow_html=True)
+        
+        # Process question when form is submitted
+        if send_button and question.strip() and not st.session_state.processing:
+            st.session_state.processing = True
+            
+            # Add user message to history
+            user_message = ChatMessage(
+                role="user",
+                content=question,
+                timestamp=datetime.now()
+            )
+            st.session_state.chat_history.append(user_message)
+            
+            # Get response from RAG system
+            with st.spinner("🤔 Thinking..."):
+                result = rag_system.chat(
+                    question=question,
+                    source_filter=source_filter,
+                    top_k=top_k,
+                    conversation_history=st.session_state.chat_history[:-1]  # Exclude current user message
+                )
+                
+                # Add assistant message to history
+                assistant_message = ChatMessage(
+                    role="assistant",
+                    content=result['answer'],
+                    timestamp=datetime.now(),
+                    sources=result['sources'],
+                    metadata={
+                        'processing_time': result['processing_time'],
+                        'context_used': result['context_used']
+                    }
+                )
+                st.session_state.chat_history.append(assistant_message)
+            
+            st.session_state.processing = False
+            st.session_state.input_key += 1
+            st.rerun()
     
     with col2:
-        send_button = st.button("Send", type="primary", use_container_width=True)
-    
-    # Process question
-    if (send_button or question) and question.strip():
-        # Add user message to history
-        user_message = ChatMessage(
-            role="user",
-            content=question,
-            timestamp=datetime.now()
-        )
-        st.session_state.chat_history.append(user_message)
+        st.subheader("🎯 Quick Actions")
         
-        # Get response from RAG system
-        with st.spinner("Thinking..."):
-            result = rag_system.chat(
-                question=question,
-                source_filter=source_filter,
-                top_k=top_k,
-                conversation_history=st.session_state.chat_history[:-1]  # Exclude current user message
-            )
-            
-            # Add assistant message to history
-            assistant_message = ChatMessage(
-                role="assistant",
-                content=result['answer'],
-                timestamp=datetime.now(),
-                sources=result['sources'],
-                metadata={
-                    'processing_time': result['processing_time'],
-                    'context_used': result['context_used']
-                }
-            )
-            st.session_state.chat_history.append(assistant_message)
+        # Quick search buttons
+        quick_searches = [
+            ("🔐 Authentication", "How does user authentication work?"),
+            ("🗄️ Database", "How is the database structured and configured?"),
+            ("🚀 Deployment", "What is the deployment process?"),
+            ("🐛 Issues", "What bugs or issues were recently discussed?"),
+            ("📋 Meetings", "Summarize recent team meetings and decisions"),
+            ("⚙️ Configuration", "Show me the system configuration")
+        ]
         
-        # Clear input and rerun to show new messages
-        st.rerun()
+        for label, query in quick_searches:
+            if st.button(label, use_container_width=True, key=f"quick_{hash(label)}"):
+                st.session_state.pending_question = query
+                st.rerun()
     
     # Footer
     st.markdown("---")
-    st.caption(f"Chat History: {len([msg for msg in st.session_state.chat_history if msg.role == 'user'])} messages")
+    st.caption(f"💬 Chat History: {len([msg for msg in st.session_state.chat_history if msg.role == 'user'])} messages | 🤖 Powered by LangGraph & Claude")
 
 if __name__ == "__main__":
     main()
