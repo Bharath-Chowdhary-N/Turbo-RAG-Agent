@@ -6,3 +6,6 @@ openai
 pathlib2
 langgraph
 typing-extensions
+streamlit
+sentence-transformers
+python-dotenv
