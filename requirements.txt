@@ -4,3 +4,5 @@ pinecone
 anthropic
 openai
 pathlib2
+langgraph
+typing-extensions
