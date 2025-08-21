@@ -124,8 +124,8 @@ class LangGraphRAGSystem:
             
             try:
                 response = self.anthropic_client.messages.create(
-                    model="claude-sonnet-4-20250514",
-                    max_tokens=2000,
+                    model="claude-3-sonnet-20240229",
+                    max_tokens=1000,
                     messages=[{"role": "user", "content": prompt}]
                 )
                 
