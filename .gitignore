@@ -1,0 +1,17 @@
+# Data directories
+data/
+chroma_db/
+*.db
+*.sqlite
+
+# Dependencies
+node_modules/
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# Large files
+*.log
+*.tmp
+processing_results.json
