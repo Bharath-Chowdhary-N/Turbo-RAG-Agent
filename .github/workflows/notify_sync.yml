@@ -1,0 +1,52 @@
+# Place this in .github/workflows/notify-sync.yml
+# in your SOURCE repository (the one with panstarrs_pipeline branch)
+
+name: Notify Target Repo on Commit
+
+on:
+  push:
+    branches:
+      - panstarrs_pipeline
+
+jobs:
+  notify-target:
+    runs-on: ubuntu-latest
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v4
+      with:
+        fetch-depth: 2  # Get last 2 commits to detect changes
+    
+    - name: Get changed files
+      id: changes
+      run: |
+        echo "Getting changed files from last commit..."
+        
+        # Get list of changed files
+        CHANGED_FILES=$(git diff --name-only HEAD^ HEAD | jq -R -s -c 'split("\n") | map(select(length > 0))')
+        echo "changed_files=$CHANGED_FILES" >> $GITHUB_OUTPUT
+        
+        echo "Changed files:"
+        echo "$CHANGED_FILES" | jq .
+    
+    - name: Trigger target repository workflow
+      run: |
+        curl -X POST \
+          -H "Accept: application/vnd.github.v3+json" \
+          -H "Authorization: token ${{ secrets.TARGET_REPO_PAT }}" \
+          https://api.github.com/repos/Bharath-Chowdhary-N/Turbo-RAG-Agent/dispatches \
+          -d '{
+            "event_type": "panstarrs_pipeline_update",
+            "client_payload": {
+              "repository": "${{ github.repository }}",
+              "branch": "${{ github.ref_name }}",
+              "commit": "${{ github.sha }}",
+              "after": "${{ github.sha }}",
+              "before": "${{ github.event.before }}",
+              "pusher": "${{ github.actor }}",
+              "changed_files": ${{ steps.changes.outputs.changed_files }},
+              "commits": ${{ toJson(github.event.commits) }}
+            }
+          }'
+        
+        echo "✅ Triggered sync workflow in target repository"
