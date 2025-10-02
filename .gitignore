@@ -1,5 +1,7 @@
 # Data directories
-data/
+data/*
+!data/github_repos/
+!data/github_repos/**
 chroma_db/
 *.db
 *.sqlite
