@@ -217,10 +217,8 @@ jobs:
           FILE_LIST=$(cat /tmp/files_to_process.txt)
           
           if [[ "$FILE_LIST" == "MANUAL_SYNC_ALL" ]]; then
-            echo "🔍 Manual sync - smart incremental processing"
-            python ci_vector_processor.py \
-              --data-dir ./data \
-              --smart-incremental
+            echo "🔍 Manual sync - processing all files"
+            python ci_vector_processor.py --data-dir ./data
           else
             FILE_COUNT=$(wc -l < /tmp/files_to_process.txt)
             echo "🎯 INCREMENTAL: Processing $FILE_COUNT changed file(s)"
