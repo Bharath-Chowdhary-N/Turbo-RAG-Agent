@@ -73,7 +73,124 @@ jobs:
         
         echo "Processing mode: $(cat $GITHUB_OUTPUT | grep mode)"
     
-    steps:
+    - name: Detect changed files
+      id: changes
+      if: steps.mode.outputs.mode == 'incremental'
+      run: |
+        # Get changed files from webhook payload (only for incremental mode)
+        if [[ "${{ github.event_name }}" == "repository_dispatch" ]]; then
+          echo "📝 Detecting changed files from commit webhook"
+          echo '${{ toJson(github.event.client_payload) }}' | jq -r '.commits[].modified[]' > /tmp/changed_files.txt 2>/dev/null || true
+          echo '${{ toJson(github.event.client_payload) }}' | jq -r '.commits[].added[]' >> /tmp/changed_files.txt 2>/dev/null || true
+          echo '${{ toJson(github.event.client_payload) }}' | jq -r '.commits[].removed[]' > /tmp/removed_files.txt 2>/dev/null || true
+        else
+          # Manual trigger without full_reprocess flag
+          echo "📦 Manual incremental trigger"
+          touch /tmp/changed_files.txt
+          touch /tmp/removed_files.txt
+        fi
+        
+        echo "Changed files:"
+        cat /tmp/changed_files.txt || echo "None"
+    
+    - name: Sync changed files (Incremental Mode)
+      id: sync_incremental
+      if: steps.mode.outputs.mode == 'incremental'
+      run: |
+        SOURCE_PATH="/tmp/source_repo"
+        DEST_PATH="${{ env.DEST_DIR }}"
+        
+        echo "🔄 Syncing changed files to $DEST_PATH"
+        mkdir -p "$DEST_PATH"
+        
+        # Create file list for vector processing
+        rm -f /tmp/files_to_process.txt
+        touch /tmp/files_to_process.txt
+        
+        CHANGED_COUNT=0
+        
+        # If webhook provided specific files, sync only those
+        if [[ -s /tmp/changed_files.txt ]]; then
+          echo "📝 Syncing only changed files"
+          
+          while IFS= read -r file; do
+            if [ -n "$file" ] && [ -f "$SOURCE_PATH/$file" ]; then
+              # Create directory structure
+              mkdir -p "$DEST_PATH/$(dirname "$file")"
+              
+              # Copy file
+              cp -f "$SOURCE_PATH/$file" "$DEST_PATH/$file"
+              echo "✓ Synced: $file"
+              
+              # Add to processing list with full path
+              echo "$DEST_PATH/$file" >> /tmp/files_to_process.txt
+              
+              ((CHANGED_COUNT++))
+            fi
+          done < /tmp/changed_files.txt
+          
+          # Handle removed files
+          if [ -s /tmp/removed_files.txt ]; then
+            while IFS= read -r file; do
+              if [ -n "$file" ]; then
+                if [ -f "$DEST_PATH/$file" ]; then
+                  echo "🗑️ Removing: $file"
+                  rm -f "$DEST_PATH/$file"
+                fi
+                # Mark for vector DB removal
+                echo "REMOVED:$DEST_PATH/$file" >> /tmp/files_to_process.txt
+                ((CHANGED_COUNT++))
+              fi
+            done < /tmp/removed_files.txt
+          fi
+          
+          echo "has_changes=true" >> $GITHUB_OUTPUT
+          echo "files_changed=$CHANGED_COUNT" >> $GITHUB_OUTPUT
+          echo "📊 Changed: $CHANGED_COUNT file(s)"
+        else
+          # Manual trigger without webhook - sync all but process intelligently
+          echo "📦 Syncing all files (manual trigger)"
+          
+          rsync -av --delete \
+            --exclude='.git' \
+            --exclude='.github' \
+            --exclude='*.pyc' \
+            --exclude='__pycache__' \
+            "$SOURCE_PATH/" "$DEST_PATH/"
+          
+          # Let processor detect what's new/changed
+          echo "MANUAL_SYNC_ALL" > /tmp/files_to_process.txt
+          
+          CHANGED_COUNT=$(find "$DEST_PATH" -type f | wc -l)
+          echo "has_changes=true" >> $GITHUB_OUTPUT
+          echo "files_changed=$CHANGED_COUNT" >> $GITHUB_OUTPUT
+          echo "📊 Total files: $CHANGED_COUNT"
+        fi
+        
+        echo "Files marked for vector processing:"
+        cat /tmp/files_to_process.txt
+    
+    - name: Sync all files (Full Mode)
+      id: sync_full
+      if: steps.mode.outputs.mode == 'full'
+      run: |
+        SOURCE_PATH="/tmp/source_repo"
+        DEST_PATH="${{ env.DEST_DIR }}"
+        
+        echo "📦 FULL SYNC - Syncing all files to $DEST_PATH"
+        mkdir -p "$DEST_PATH"
+        
+        rsync -av --delete \
+          --exclude='.git' \
+          --exclude='.github' \
+          --exclude='*.pyc' \
+          --exclude='__pycache__' \
+          "$SOURCE_PATH/" "$DEST_PATH/"
+        
+        TOTAL_FILES=$(find "$DEST_PATH" -type f | wc -l)
+        echo "has_changes=true" >> $GITHUB_OUTPUT
+        echo "files_changed=$TOTAL_FILES" >> $GITHUB_OUTPUT
+        echo "📊 Total files synced: $TOTAL_FILES"
     - name: Checkout this repository
       uses: actions/checkout@v4
       with:
@@ -246,10 +363,12 @@ jobs:
           echo "No changes to commit"
           echo "has_changes=false" >> $GITHUB_OUTPUT
         else
-          COMMIT_MSG="🔄 Sync from ${{ env.SOURCE_REPO }}@${{ env.SOURCE_BRANCH }}"
-          
-          if [[ "${{ github.event_name }}" == "repository_dispatch" ]]; then
-            COMMIT_MSG="$COMMIT_MSG - Commit ${{ github.event.client_payload.after }}"
+          if [[ "${{ steps.mode.outputs.mode }}" == "full" ]]; then
+            COMMIT_MSG="🔄 Full sync from ${{ env.SOURCE_REPO }}@${{ env.SOURCE_BRANCH }} (scheduled)"
+          elif [[ "${{ github.event_name }}" == "repository_dispatch" ]]; then
+            COMMIT_MSG="🔄 Sync from ${{ env.SOURCE_REPO }}@${{ env.SOURCE_BRANCH }} - Commit ${{ github.event.client_payload.after }}"
+          else
+            COMMIT_MSG="🔄 Sync from ${{ env.SOURCE_REPO }}@${{ env.SOURCE_BRANCH }}"
           fi
           
           git commit -m "$COMMIT_MSG"
@@ -259,8 +378,8 @@ jobs:
           echo "✅ Changes committed and pushed"
         fi
     
-    - name: Process Vectors (Incremental Only)
-      if: steps.commit.outputs.has_changes == 'true'
+    - name: Process Vectors (Incremental)
+      if: steps.commit.outputs.has_changes == 'true' && steps.mode.outputs.mode == 'incremental'
       run: |
         if [ -f /tmp/files_to_process.txt ] && [ -s /tmp/files_to_process.txt ]; then
           FILE_LIST=$(cat /tmp/files_to_process.txt)
@@ -272,7 +391,7 @@ jobs:
               --smart-incremental
           else
             FILE_COUNT=$(wc -l < /tmp/files_to_process.txt)
-            echo "🎯 Processing $FILE_COUNT changed file(s)"
+            echo "🎯 INCREMENTAL: Processing $FILE_COUNT changed file(s)"
             
             python ci_vector_processor.py \
               --data-dir ./data \
@@ -283,6 +402,13 @@ jobs:
           echo "⚠️ No files to process"
         fi
       timeout-minutes: 15
+    
+    - name: Process Vectors (Full Reprocessing)
+      if: steps.commit.outputs.has_changes == 'true' && steps.mode.outputs.mode == 'full'
+      run: |
+        echo "🚀 FULL PROCESSING: Reprocessing all files in data directory"
+        python ci_vector_processor.py --data-dir ./data
+      timeout-minutes: 120
     
     - name: Validate Processing Results
       if: steps.commit.outputs.has_changes == 'true'
@@ -311,11 +437,12 @@ jobs:
       uses: rtCamp/action-slack-notify@v2
       env:
         SLACK_WEBHOOK: ${{ secrets.SLACK_WEBHOOK }}
-        SLACK_TITLE: 'Incremental Vector Update'
+        SLACK_TITLE: 'Vector Processing Status'
         SLACK_MESSAGE: |
           Status: ${{ job.status == 'success' && '✅ Success' || '❌ Failed' }}
+          Mode: ${{ steps.mode.outputs.mode == 'full' && '🔄 FULL REPROCESSING' || '🎯 INCREMENTAL' }}
           Source: ${{ env.SOURCE_REPO }}@${{ env.SOURCE_BRANCH }}
-          Files Changed: ${{ steps.sync.outputs.files_changed }}
+          Files Changed: ${{ steps.sync_incremental.outputs.files_changed || steps.sync_full.outputs.files_changed }}
           Processing: ${{ steps.commit.outputs.has_changes == 'true' && 'Completed' || 'No changes' }}
           Trigger: ${{ github.event_name }}
         SLACK_COLOR: ${{ job.status == 'success' && 'good' || 'danger' }}
