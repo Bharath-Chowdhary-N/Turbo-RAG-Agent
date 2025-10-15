@@ -8,14 +8,18 @@ on:
         description: 'Force full sync'
         required: false
         default: 'false'
+      full_reprocess:
+        description: 'Reprocess all vectors (not just changed files)'
+        required: false
+        default: 'false'
   
   # Triggered by repository_dispatch from the source repo
   repository_dispatch:
     types: [panstarrs_pipeline_update]
   
-  # Optional: Schedule periodic syncs as backup
+  # Optional: Schedule full reprocessing periodically
   schedule:
-    - cron: '0 */6 * * *'  # Every 6 hours
+    - cron: '0 2 * * 0'  # Weekly on Sunday at 2 AM - full reprocess
 
 env:
   SOURCE_REPO: 'patkel/turbo_telescope'  # Change to actual repo
@@ -64,22 +68,32 @@ jobs:
       run: |
         cd /tmp/source_repo
         
-        if [[ "${{ github.event_name }}" == "repository_dispatch" ]]; then
+        # Check if this is a scheduled full reprocess
+        if [[ "${{ github.event_name }}" == "schedule" ]] || [[ "${{ github.event.inputs.full_reprocess }}" == "true" ]]; then
+          echo "🔄 Scheduled run or manual full reprocess requested"
+          echo "sync_mode=full" >> $GITHUB_OUTPUT
+          echo "process_mode=full" >> $GITHUB_OUTPUT
+        elif [[ "${{ github.event_name }}" == "repository_dispatch" ]]; then
           # Get changed files from the webhook payload
           echo "Changed files from webhook:"
           echo '${{ toJson(github.event.client_payload) }}' | jq -r '.commits[].modified[]' > /tmp/changed_files.txt || true
           echo '${{ toJson(github.event.client_payload) }}' | jq -r '.commits[].added[]' >> /tmp/changed_files.txt || true
+          echo '${{ toJson(github.event.client_payload) }}' | jq -r '.commits[].removed[]' >> /tmp/removed_files.txt || true
+          
           cat /tmp/changed_files.txt
           
           if [ ! -s /tmp/changed_files.txt ]; then
             echo "No specific files detected, will sync all"
             echo "sync_mode=full" >> $GITHUB_OUTPUT
+            echo "process_mode=full" >> $GITHUB_OUTPUT
           else
             echo "sync_mode=incremental" >> $GITHUB_OUTPUT
+            echo "process_mode=incremental" >> $GITHUB_OUTPUT
           fi
         else
-          echo "Manual or scheduled trigger - full sync"
+          echo "Manual trigger - incremental by default"
           echo "sync_mode=full" >> $GITHUB_OUTPUT
+          echo "process_mode=incremental" >> $GITHUB_OUTPUT
         fi
     
     - name: Sync files to destination
@@ -95,6 +109,10 @@ jobs:
         
         SYNC_MODE="${{ steps.changes.outputs.sync_mode }}"
         
+        # Create a file list for vector processing
+        rm -f /tmp/files_to_process.txt
+        touch /tmp/files_to_process.txt
+        
         if [[ "$SYNC_MODE" == "incremental" ]] && [[ -f /tmp/changed_files.txt ]]; then
           echo "📝 Incremental sync - copying only changed files"
           
@@ -107,9 +125,25 @@ jobs:
               # Copy file
               cp -f "$SOURCE_PATH/$file" "$DEST_PATH/$file"
               echo "✓ Synced: $file"
+              
+              # Add to processing list with full path
+              echo "$DEST_PATH/$file" >> /tmp/files_to_process.txt
+              
               ((CHANGED_COUNT++))
             fi
           done < /tmp/changed_files.txt
+          
+          # Handle removed files
+          if [ -f /tmp/removed_files.txt ]; then
+            while IFS= read -r file; do
+              if [ -n "$file" ] && [ -f "$DEST_PATH/$file" ]; then
+                echo "🗑️ Removing: $file"
+                rm -f "$DEST_PATH/$file"
+                # Note: Also need to remove from vector DB - handled by processor
+                echo "REMOVED:$DEST_PATH/$file" >> /tmp/files_to_process.txt
+              fi
+            done < /tmp/removed_files.txt
+          fi
           
           echo "files_changed=$CHANGED_COUNT" >> $GITHUB_OUTPUT
           echo "📊 Synced $CHANGED_COUNT files"
@@ -127,7 +161,14 @@ jobs:
           CHANGED_COUNT=$(find "$DEST_PATH" -type f | wc -l)
           echo "files_changed=$CHANGED_COUNT" >> $GITHUB_OUTPUT
           echo "📊 Synced all files (total: $CHANGED_COUNT)"
+          
+          # For full sync, we'll let the processor decide what to process
+          echo "FULL_SYNC" > /tmp/files_to_process.txt
         fi
+        
+        # Show what will be processed
+        echo "Files marked for vector processing:"
+        cat /tmp/files_to_process.txt
     
     - name: Track with Git LFS
       run: |
@@ -148,8 +189,8 @@ jobs:
         git config user.name "github-actions[bot]"
         git config user.email "github-actions[bot]@users.noreply.github.com"
         
-        # Add all changes
-        git add ${{ env.DEST_DIR }}
+        # Force add files even if in .gitignore (since data dir might be ignored)
+        git add -f ${{ env.DEST_DIR }}
         git add .gitattributes || true
         
         # Check if there are changes to commit
@@ -170,12 +211,31 @@ jobs:
           echo "✅ Changes committed and pushed"
         fi
     
-    - name: Process Vectors (Test Mode)
-      if: steps.commit.outputs.has_changes == 'true'
+    - name: Process Vectors (Incremental - Changed Files Only)
+      if: steps.commit.outputs.has_changes == 'true' && steps.changes.outputs.process_mode == 'incremental'
       run: |
-        echo "🧪 Running vector processing in TEST mode"
-        python ci_vector_processor.py --data-dir ./data --test-mode
-      timeout-minutes: 10
+        echo "🎯 INCREMENTAL processing - only changed files"
+        
+        if [ -f /tmp/files_to_process.txt ] && [ -s /tmp/files_to_process.txt ]; then
+          FILE_COUNT=$(wc -l < /tmp/files_to_process.txt)
+          echo "Processing $FILE_COUNT changed file(s)"
+          
+          # Pass the file list to the processor
+          python ci_vector_processor.py \
+            --data-dir ./data \
+            --file-list /tmp/files_to_process.txt \
+            --incremental
+        else
+          echo "No files to process"
+        fi
+      timeout-minutes: 15
+    
+    - name: Process Vectors (Full - All Files)
+      if: steps.commit.outputs.has_changes == 'true' && steps.changes.outputs.process_mode == 'full'
+      run: |
+        echo "🚀 FULL processing - all files in data directory"
+        python ci_vector_processor.py --data-dir ./data
+      timeout-minutes: 120
     
     - name: Validate Processing Results
       if: steps.commit.outputs.has_changes == 'true'
@@ -195,6 +255,7 @@ jobs:
         name: sync-processing-results-${{ github.run_number }}
         path: |
           processing_results.json
+          /tmp/files_to_process.txt
           /tmp/changed_files.txt
     
     - name: Slack Notification
@@ -206,6 +267,8 @@ jobs:
         SLACK_MESSAGE: |
           Status: ${{ job.status == 'success' && '✅ Success' || '❌ Failed' }}
           Source: ${{ env.SOURCE_REPO }}@${{ env.SOURCE_BRANCH }}
+          Sync Mode: ${{ steps.changes.outputs.sync_mode }}
+          Process Mode: ${{ steps.changes.outputs.process_mode }}
           Files Changed: ${{ steps.sync.outputs.files_changed }}
           Vector Processing: ${{ steps.commit.outputs.has_changes == 'true' && 'Completed' || 'Skipped (no changes)' }}
           Trigger: ${{ github.event_name }}
